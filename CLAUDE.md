@@ -110,6 +110,32 @@ Settings tab provides:
 4. Close stdin to signal completion
 5. Stream stdout/stderr to UI in real-time
 
+## PATH Environment Detection (macOS)
+
+**Problem**: macOS GUI applications (including Electron apps like Obsidian) don't inherit the terminal's PATH environment variable. This prevented the plugin from finding Homebrew-installed CLI tools.
+
+**Solution**: The plugin now automatically detects and uses the user's actual shell PATH:
+
+1. **getShellPath()** function tries multiple strategies:
+   - Sources shell profile files (~/.zshrc, ~/.zprofile, ~/.bash_profile, ~/.profile)
+   - Falls back to login shell (`zsh -l -c "echo $PATH"`)
+   - Uses hardcoded Homebrew paths as last resort (`/opt/homebrew/bin:/opt/homebrew/sbin:...`)
+
+2. **getExtendedEnv()** function merges detected PATH with process environment
+
+3. **PATH caching** for performance - detected once and reused
+
+4. **All execution contexts** use extended PATH:
+   - Main command execution via `runCommandWithSpawn()`
+   - Test button validation via `execAsync()`
+
+**Result**: CLI tools work with simple command names (e.g., `claude` instead of full paths) and have access to system commands (git, npm, etc.) when they execute.
+
+**Console Logging**: The plugin logs PATH detection to browser console for debugging:
+```
+Detected shell PATH from profile: /opt/homebrew/bin:/usr/local/bin:...
+```
+
 ## Supported AI Tools
 
 ### Claude Code
