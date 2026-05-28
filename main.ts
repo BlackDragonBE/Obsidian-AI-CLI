@@ -6,6 +6,70 @@ import { join } from 'path';
 
 const execAsync = promisify(exec);
 
+// Cache for the user's shell PATH
+let cachedShellPath: string | null = null;
+
+/**
+ * Get the user's actual shell PATH environment variable.
+ * This is necessary on macOS because GUI apps don't inherit the terminal's PATH.
+ * Caches the result for performance.
+ */
+async function getShellPath(): Promise<string> {
+	if (cachedShellPath) {
+		return cachedShellPath;
+	}
+
+	try {
+		// Try to get PATH from the user's shell by sourcing their profile
+		// This works more reliably from GUI apps on macOS
+		const shellCommands = [
+			'source ~/.zshrc 2>/dev/null && echo $PATH',
+			'source ~/.zprofile 2>/dev/null && echo $PATH',
+			'source ~/.bash_profile 2>/dev/null && echo $PATH',
+			'source ~/.profile 2>/dev/null && echo $PATH'
+		];
+
+		for (const cmd of shellCommands) {
+			try {
+				const { stdout } = await execAsync(`zsh -c '${cmd}'`);
+				const path = stdout.trim();
+				if (path && path.includes('/opt/homebrew/bin')) {
+					cachedShellPath = path;
+					console.log('Detected shell PATH from profile:', cachedShellPath);
+					return cachedShellPath;
+				}
+			} catch (e) {
+				// Try next command
+				continue;
+			}
+		}
+
+		// If profile sourcing didn't work, try login shell
+		const { stdout } = await execAsync('zsh -l -c "echo $PATH"');
+		cachedShellPath = stdout.trim();
+		console.log('Detected shell PATH from login shell:', cachedShellPath);
+		return cachedShellPath;
+	} catch (error) {
+		console.error('Failed to detect shell PATH, using fallback:', error);
+		// Fallback to common paths on macOS (prioritize Homebrew)
+		cachedShellPath = '/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin';
+		console.log('Using fallback PATH:', cachedShellPath);
+		return cachedShellPath;
+	}
+}
+
+/**
+ * Get environment variables with extended PATH for spawning processes.
+ * Merges the user's actual shell PATH with the current process environment.
+ */
+async function getExtendedEnv(): Promise<NodeJS.ProcessEnv> {
+	const shellPath = await getShellPath();
+	return {
+		...process.env,
+		PATH: shellPath
+	};
+}
+
 interface ObsidianAICliSettings {
 	claudeCodePath: string;
 	geminiCliPath: string;
@@ -1164,13 +1228,17 @@ class ToolView extends ItemView {
 	}
 
 	async runCommandWithSpawn(command: string, cwd: string, stdinContent?: string): Promise<void> {
-		return new Promise((resolve, reject) => {
+		return new Promise(async (resolve, reject) => {
 			const timeout = 600000;
-			
-			this.currentProcess = spawn(command, [], { 
+
+			// Get extended environment with user's actual shell PATH
+			const env = await getExtendedEnv();
+
+			this.currentProcess = spawn(command, [], {
 				cwd,
 				shell: true,
-				stdio: ['pipe', 'pipe', 'pipe']
+				stdio: ['pipe', 'pipe', 'pipe'],
+				env
 			});
 
 			// Handle stdin content or close immediately to prevent hanging
@@ -1465,7 +1533,8 @@ class ObsidianAICliSettingTab extends PluginSettingTab {
 				.setButtonText('Test')
 				.onClick(async () => {
 					try {
-						await execAsync(`${this.plugin.settings.claudeCodePath} --version`);
+						const env = await getExtendedEnv();
+						await execAsync(`${this.plugin.settings.claudeCodePath} --version`, { env });
 						new Notice('Claude Code CLI found and working!');
 					} catch (error) {
 						new Notice('Claude Code CLI not found or not working. Check the path.');
@@ -1500,7 +1569,8 @@ class ObsidianAICliSettingTab extends PluginSettingTab {
 				.setButtonText('Test')
 				.onClick(async () => {
 					try {
-						await execAsync(`${this.plugin.settings.geminiCliPath} --version`);
+						const env = await getExtendedEnv();
+						await execAsync(`${this.plugin.settings.geminiCliPath} --version`, { env });
 						new Notice('Gemini CLI found and working!');
 					} catch (error) {
 						new Notice('Gemini CLI not found or not working. Check the path.');
@@ -1544,7 +1614,8 @@ class ObsidianAICliSettingTab extends PluginSettingTab {
 				.setButtonText('Test')
 				.onClick(async () => {
 					try {
-						await execAsync(`${this.plugin.settings.codexPath} --version`);
+						const env = await getExtendedEnv();
+						await execAsync(`${this.plugin.settings.codexPath} --version`, { env });
 						new Notice('OpenAI Codex CLI found and working!');
 					} catch (error) {
 						new Notice('OpenAI Codex CLI not found or not working. Check the path.');
@@ -1579,7 +1650,8 @@ class ObsidianAICliSettingTab extends PluginSettingTab {
 				.setButtonText('Test')
 				.onClick(async () => {
 					try {
-						await execAsync(`${this.plugin.settings.qwenPath} --version`);
+						const env = await getExtendedEnv();
+						await execAsync(`${this.plugin.settings.qwenPath} --version`, { env });
 						new Notice('Qwen Code CLI found and working!');
 					} catch (error) {
 						new Notice('Qwen Code CLI not found or not working. Check the path.');
