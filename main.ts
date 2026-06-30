@@ -15,6 +15,11 @@ let cachedShellPath: string | null = null;
  * Caches the result for performance.
  */
 async function getShellPath(): Promise<string> {
+	// For Windows, just return the system PATH env directly
+	if (process.platform === 'win32') {
+		return process.env.PATH || '';
+	}
+
 	if (cachedShellPath) {
 		return cachedShellPath;
 	}
